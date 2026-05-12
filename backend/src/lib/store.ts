@@ -88,7 +88,9 @@ async function readDb(): Promise<DbShape> {
   const productsRaw = Array.isArray(raw?.products) ? raw.products : [];
   const pricesRaw = Array.isArray(raw?.prices) ? raw.prices : [];
 
-  const migratedProducts: Product[] = productsRaw.map(migrateProduct).filter((p) => p.id && p.name);
+  const migratedProducts: Product[] = productsRaw
+    .map(migrateProduct)
+    .filter((p: Product) => Boolean(p.id && p.name));
 
   const db: DbShape = {
     products: migratedProducts,
