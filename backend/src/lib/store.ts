@@ -53,7 +53,7 @@ function migrateProduct(raw: any): Product {
     : typeof excludeKeywordRaw === "string"
       ? excludeKeywordRaw
           .split(/[,\n]/)
-          .map((x) => x.trim())
+          .map((x: string) => x.trim())
           .filter(Boolean)
       : [];
 
@@ -85,16 +85,16 @@ function migrateProduct(raw: any): Product {
 async function readDb(): Promise<DbShape> {
   const raw = await readJsonFile<any>(dbPath, { products: [], prices: [] });
 
-  const productsRaw = Array.isArray(raw?.products) ? raw.products : [];
-  const pricesRaw = Array.isArray(raw?.prices) ? raw.prices : [];
+  const productsRaw: unknown[] = Array.isArray(raw?.products) ? raw.products : [];
+  const pricesRaw: unknown[] = Array.isArray(raw?.prices) ? raw.prices : [];
 
   const migratedProducts: Product[] = productsRaw
-    .map(migrateProduct)
+    .map((row) => migrateProduct(row))
     .filter((p: Product) => Boolean(p.id && p.name));
 
   const db: DbShape = {
     products: migratedProducts,
-    prices: pricesRaw
+    prices: pricesRaw as PricePoint[]
   };
 
   // 한 번이라도 스키마가 달라졌다면 저장(자동 마이그레이션)
@@ -117,11 +117,11 @@ export const store = {
   },
   async getProduct(id: string) {
     const db = await readDb();
-    return db.products.find((p) => p.id === id) ?? null;
+    return db.products.find((p: Product) => p.id === id) ?? null;
   },
   async upsertProduct(product: Product) {
     const db = await readDb();
-    const idx = db.products.findIndex((p) => p.id === product.id);
+    const idx = db.products.findIndex((p: Product) => p.id === product.id);
     if (idx >= 0) db.products[idx] = product;
     else db.products.unshift(product);
     await writeDb(db);
@@ -129,7 +129,7 @@ export const store = {
   },
   async bulkUpsertProducts(products: Product[]) {
     const db = await readDb();
-    const byId = new Map(db.products.map((p) => [p.id, p] as const));
+    const byId = new Map(db.products.map((p: Product) => [p.id, p] as const));
     for (const p of products) byId.set(p.id, p);
     db.products = [...byId.values()].sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
     await writeDb(db);
@@ -137,7 +137,7 @@ export const store = {
   },
   async deleteProduct(id: string) {
     const db = await readDb();
-    db.products = db.products.filter((p) => p.id !== id);
+    db.products = db.products.filter((p: Product) => p.id !== id);
     db.prices = db.prices.filter((x) => x.productId !== id);
     await writeDb(db);
   },
@@ -156,7 +156,7 @@ export const store = {
   },
   async listLatestPricesByProduct(productId: string) {
     const db = await readDb();
-    const points = db.prices.filter((x) => x.productId === productId);
+    const points = db.prices.filter((x: PricePoint) => x.productId === productId);
     const latestByCompetitor = new Map<string, PricePoint>();
     for (const p of points) {
       if (!latestByCompetitor.has(p.competitorId)) latestByCompetitor.set(p.competitorId, p);
