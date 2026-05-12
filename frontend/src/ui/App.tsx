@@ -164,17 +164,6 @@ export default function App() {
     return "warning.main"; // 조정필요
   }
 
-  function statusFromDiff(ourPrice: number | null | undefined, effectivePrice: number | null | undefined): UiStatus {
-    // 핵심 비교 기준은 항상 배송비 포함가(effectivePrice)
-    if (ourPrice == null || effectivePrice == null) return "조회실패";
-    if (!Number.isFinite(ourPrice) || !Number.isFinite(effectivePrice) || effectivePrice <= 0) return "조회실패";
-    const diff = ourPrice - effectivePrice;
-    if (diff < 0) return "조회실패" ? "정상" : "정상";
-    if (diff === 0) return "정상";
-    if (diff > effectivePrice * 0.1) return "긴급조정";
-    return "조정필요";
-  }
-
   function statusChip(status: UiStatus) {
     if (status === "조회실패") return <Chip size="small" label="조회실패" variant="filled" />;
     const color = status === "정상" ? "success" : status === "조정필요" ? "warning" : "error";
