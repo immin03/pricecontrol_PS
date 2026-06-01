@@ -159,11 +159,31 @@ function toNumber(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+// 무료배송으로 볼 수 있는 표현 (상품명/판매처에 흔히 노출됨)
+const FREE_SHIPPING_TOKENS = ["무료배송", "무료 배송", "배송비무료", "배송무료", "무배", "free shipping"];
+
+// 무료배송 비중이 높은 대표 채널 (네이버 OpenAPI가 배송비를 주지 않아 보정)
+const FREE_SHIPPING_MALLS = ["쿠팡", "coupang", "로켓배송", "쓱", "ssg", "마켓컬리", "컬리"];
+
+function detectFreeShipping(item: NaverShopItem): boolean {
+  const title = stripTags(String(item.title ?? ""));
+  const mallName = String(item.mallName ?? "");
+
+  if (FREE_SHIPPING_TOKENS.some((kw) => includesIgnoreCase(title, kw))) return true;
+  if (includesIgnoreCase(mallName, "무료")) return true;
+  if (FREE_SHIPPING_MALLS.some((m) => includesIgnoreCase(mallName, m))) return true;
+  return false;
+}
+
 function getShippingCost(item: NaverShopItem): number {
+  // 1순위: 응답에 배송비 필드가 있으면 그대로 사용
   const fromField = toNumber(item.shippingCost);
   if (fromField != null) return Math.max(0, Math.floor(fromField));
-  const mallName = String(item.mallName ?? "");
-  if (includesIgnoreCase(mallName, "무료")) return 0;
+
+  // 2순위: 상품명/판매처에서 무료배송 신호가 감지되면 0원
+  if (detectFreeShipping(item)) return 0;
+
+  // 그 외에는 기존과 동일하게 보수적으로 3,000원 가정
   return 3000;
 }
 

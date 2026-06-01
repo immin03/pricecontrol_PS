@@ -31,6 +31,7 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TableSortLabel,
   Toolbar,
   Typography
 } from "@mui/material";
@@ -38,8 +39,12 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import DeleteIcon from "@mui/icons-material/Delete";
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
-import type { NaverCandidate, NaverPriceResult, Product } from "./api";
+import DownloadIcon from "@mui/icons-material/Download";
+import type { ExportRow, NaverCandidate, NaverPriceResult, Product } from "./api";
 import { backend } from "./api";
+
+type SortKey = "naverPrice" | "shippingFee" | "effectivePrice" | "recommended" | "diff";
+type SortOrder = "asc" | "desc";
 
 type TabKey = "dashboard" | "products";
 
@@ -62,6 +67,9 @@ export default function App() {
     candidates: NaverCandidate[];
   } | null>(null);
 
+  const [includeKw, setIncludeKw] = useState("");
+  const [excludeKw, setExcludeKw] = useState("");
+
   const [uploadSnackbarOpen, setUploadSnackbarOpen] = useState(false);
   const [uploadSnackbarMsg, setUploadSnackbarMsg] = useState<string>("");
   const [toastSeverity, setToastSeverity] = useState<"success" | "error">("success");
@@ -71,10 +79,48 @@ export default function App() {
   const [clearAllText, setClearAllText] = useState("");
   const [clearAllBusy, setClearAllBusy] = useState(false);
 
+  const [orderBy, setOrderBy] = useState<SortKey | null>(null);
+  const [order, setOrder] = useState<SortOrder>("asc");
+
+  function handleSort(key: SortKey) {
+    if (orderBy === key) {
+      setOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setOrderBy(key);
+      setOrder("asc");
+    }
+  }
+
   function notify(msg: string, severity: "success" | "error" = "success") {
     setUploadSnackbarMsg(msg);
     setToastSeverity(severity);
     setUploadSnackbarOpen(true);
+  }
+
+  async function downloadDashboardExcel() {
+    try {
+      const exportRows: ExportRow[] = filteredRows.map((r) => ({
+        name: r.product.name,
+        ourPrice: r.ourPrice,
+        naverPrice: r.result?.selected?.price ?? null,
+        shippingFee: r.result?.selected?.shippingFee ?? null,
+        effectivePrice: r.effective,
+        recommended: r.recommended,
+        diff: r.diff,
+        status: r.status
+      }));
+      const blob = await backend.exportDashboardXlsx(exportRows);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "price_dashboard.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "엑셀 다운로드 실패", "error");
+    }
   }
 
   async function downloadUploadTemplate() {
@@ -144,6 +190,13 @@ export default function App() {
     return n.toLocaleString("ko-KR");
   }
 
+  function formatDate(iso: string | null | undefined) {
+    if (!iso) return "-";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "-";
+    return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
+  }
+
   type UiStatus = "정상" | "조정필요" | "긴급조정" | "조회실패";
 
   function computeStatus(ourPrice: number | null | undefined, effectivePrice: number | null | undefined): UiStatus {
@@ -168,6 +221,13 @@ export default function App() {
     if (status === "조회실패") return <Chip size="small" label="조회실패" variant="filled" />;
     const color = status === "정상" ? "success" : status === "조정필요" ? "warning" : "error";
     return <Chip size="small" label={status} color={color} variant="filled" />;
+  }
+
+  function parseKeywords(raw: string): string[] {
+    return raw
+      .split(/[,\s]+/)
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean);
   }
 
   function excludedReasonKo(reason: NaverCandidate["excludedReason"] | undefined) {
@@ -222,7 +282,37 @@ export default function App() {
     return enriched;
   }, [products, resultByProductId]);
 
-  const filteredRows = rows;
+  const filteredRows = useMemo(() => {
+    if (!orderBy) return rows;
+
+    const valueOf = (row: (typeof rows)[number]): number | null => {
+      switch (orderBy) {
+        case "naverPrice":
+          return row.result?.selected?.price ?? null;
+        case "shippingFee":
+          return row.result?.selected?.shippingFee ?? null;
+        case "effectivePrice":
+          return row.effective;
+        case "recommended":
+          return row.recommended;
+        case "diff":
+          return row.diff;
+        default:
+          return null;
+      }
+    };
+
+    const sorted = rows.slice().sort((a, b) => {
+      const av = valueOf(a);
+      const bv = valueOf(b);
+      // 값이 없는 행(-)은 항상 아래로 보냄
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return order === "asc" ? av - bv : bv - av;
+    });
+    return sorted;
+  }, [rows, orderBy, order]);
 
   async function openCandidates(product: Product, result?: NaverPriceResult) {
     // 방어: productId 없으면 호출하지 않음
@@ -238,6 +328,8 @@ export default function App() {
     setCandidatesOpen(true);
     setCandidatesLoading(true);
     setCandidatesError(null);
+    setIncludeKw("");
+    setExcludeKw("");
     setSelectedRow({ product, result, candidates: [] });
     setSelectedProductId(product.id);
     try {
@@ -267,6 +359,14 @@ export default function App() {
           <Typography variant="h6" sx={{ flex: 1 }}>
             파마스퀘어 최저가 트래킹
           </Typography>
+          <Button
+            color="inherit"
+            startIcon={<DownloadIcon />}
+            sx={{ mr: 1 }}
+            onClick={() => void downloadDashboardExcel()}
+          >
+            엑셀 다운로드
+          </Button>
           <Button
             color="inherit"
             sx={{ mr: 1 }}
@@ -352,11 +452,51 @@ export default function App() {
                   <TableRow>
                     <TableCell>상품명</TableCell>
                     <TableCell align="right">우리 판매가</TableCell>
-                    <TableCell align="right">네이버 최저가</TableCell>
-                    <TableCell align="right">배송비</TableCell>
-                    <TableCell align="right">배송비 포함가</TableCell>
-                    <TableCell align="right">추천 가격</TableCell>
-                    <TableCell align="right">가격 차이</TableCell>
+                    <TableCell align="right" sortDirection={orderBy === "naverPrice" ? order : false}>
+                      <TableSortLabel
+                        active={orderBy === "naverPrice"}
+                        direction={orderBy === "naverPrice" ? order : "asc"}
+                        onClick={() => handleSort("naverPrice")}
+                      >
+                        네이버 최저가
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell align="right" sortDirection={orderBy === "shippingFee" ? order : false}>
+                      <TableSortLabel
+                        active={orderBy === "shippingFee"}
+                        direction={orderBy === "shippingFee" ? order : "asc"}
+                        onClick={() => handleSort("shippingFee")}
+                      >
+                        배송비
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell align="right" sortDirection={orderBy === "effectivePrice" ? order : false}>
+                      <TableSortLabel
+                        active={orderBy === "effectivePrice"}
+                        direction={orderBy === "effectivePrice" ? order : "asc"}
+                        onClick={() => handleSort("effectivePrice")}
+                      >
+                        배송비 포함가
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell align="right" sortDirection={orderBy === "recommended" ? order : false}>
+                      <TableSortLabel
+                        active={orderBy === "recommended"}
+                        direction={orderBy === "recommended" ? order : "asc"}
+                        onClick={() => handleSort("recommended")}
+                      >
+                        추천 가격
+                      </TableSortLabel>
+                    </TableCell>
+                    <TableCell align="right" sortDirection={orderBy === "diff" ? order : false}>
+                      <TableSortLabel
+                        active={orderBy === "diff"}
+                        direction={orderBy === "diff" ? order : "asc"}
+                        onClick={() => handleSort("diff")}
+                      >
+                        가격 차이
+                      </TableSortLabel>
+                    </TableCell>
                     <TableCell align="center">상태</TableCell>
                   </TableRow>
                 </TableHead>
@@ -379,6 +519,9 @@ export default function App() {
                         <TableCell>
                           <Typography variant="body2" sx={{ fontWeight: 600 }}>
                             {product.name}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary">
+                            업데이트 {formatDate(product.updatedAt)}
                           </Typography>
                         </TableCell>
                         <TableCell align="right">{money(ourPrice)}</TableCell>
@@ -601,13 +744,50 @@ export default function App() {
                   })()}
                 </Stack>
 
-                {(selectedRow?.candidates?.length ?? 0) === 0 ? (
-                  <Paper variant="outlined" sx={{ p: 2 }}>
-                    <Typography color="text.secondary">
-                      {selectedRow?.result?.message ? `데이터 없음 · ${selectedRow.result.message}` : "데이터 없음"}
-                    </Typography>
-                  </Paper>
-                ) : (
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} sx={{ mb: 1.5 }}>
+                  <TextField
+                    size="small"
+                    label="포함 키워드"
+                    placeholder="예: 정품 30정 (공백/콤마로 구분)"
+                    value={includeKw}
+                    onChange={(e) => setIncludeKw(e.target.value)}
+                    fullWidth
+                  />
+                  <TextField
+                    size="small"
+                    label="제외 키워드"
+                    placeholder="예: 샘플 리필 (공백/콤마로 구분)"
+                    value={excludeKw}
+                    onChange={(e) => setExcludeKw(e.target.value)}
+                    fullWidth
+                  />
+                </Stack>
+
+                {(() => {
+                  const includeList = parseKeywords(includeKw);
+                  const excludeList = parseKeywords(excludeKw);
+                  const kwFiltered = (selectedRow?.candidates ?? []).filter((c) => {
+                    const t = (c.title ?? "").toLowerCase();
+                    if (includeList.length > 0 && !includeList.every((kw) => t.includes(kw))) return false;
+                    if (excludeList.length > 0 && excludeList.some((kw) => t.includes(kw))) return false;
+                    return true;
+                  });
+
+                  if (kwFiltered.length === 0) {
+                    return (
+                      <Paper variant="outlined" sx={{ p: 2 }}>
+                        <Typography color="text.secondary">
+                          {includeList.length > 0 || excludeList.length > 0
+                            ? "키워드 조건에 맞는 후보가 없습니다."
+                            : selectedRow?.result?.message
+                              ? `데이터 없음 · ${selectedRow.result.message}`
+                              : "데이터 없음"}
+                        </Typography>
+                      </Paper>
+                    );
+                  }
+
+                  return (
                   <TableContainer
                     component={Paper}
                     variant="outlined"
@@ -636,7 +816,7 @@ export default function App() {
                       </TableHead>
                       <TableBody>
                         {(() => {
-                          const sorted = (selectedRow?.candidates ?? [])
+                          const sorted = kwFiltered
                             .slice()
                             .sort((a, b) => {
                               // 8. 모달 정렬: PASSED(포함) 먼저, 그 다음 배송비 포함가 낮은 순
@@ -733,7 +913,8 @@ export default function App() {
                       </TableBody>
                     </Table>
                   </TableContainer>
-                )}
+                  );
+                })()}
               </>
             )}
           </Paper>

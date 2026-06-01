@@ -51,6 +51,56 @@ productsRouter.get("/upload-template", async (_req, res) => {
   res.send(buf);
 });
 
+const exportRowSchema = z.object({
+  name: z.string().default(""),
+  ourPrice: z.number().nullable().optional(),
+  naverPrice: z.number().nullable().optional(),
+  shippingFee: z.number().nullable().optional(),
+  effectivePrice: z.number().nullable().optional(),
+  recommended: z.number().nullable().optional(),
+  diff: z.number().nullable().optional(),
+  status: z.string().default("")
+});
+
+const exportSchema = z.object({
+  rows: z.array(exportRowSchema).default([])
+});
+
+// 대시보드 표시 데이터를 엑셀로 내보내기
+productsRouter.post("/export", async (req, res) => {
+  const parsed = exportSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+
+  const header = ["상품명", "우리 판매가", "네이버 최저가", "배송비", "배송비 포함가", "추천 가격", "가격 차이", "상태"];
+  const aoa: Array<Array<string | number>> = [header];
+
+  const cell = (v: number | null | undefined): string | number => (v == null || !Number.isFinite(v) ? "-" : v);
+
+  for (const r of parsed.data.rows) {
+    aoa.push([
+      r.name,
+      cell(r.ourPrice),
+      cell(r.naverPrice),
+      cell(r.shippingFee),
+      cell(r.effectivePrice),
+      cell(r.recommended),
+      cell(r.diff),
+      r.status || "-"
+    ]);
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws["!cols"] = [{ wch: 40 }, { wch: 12 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 10 }];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "가격대시보드");
+
+  const buf = XLSX.write(wb, { bookType: "xlsx", type: "buffer" }) as unknown as Buffer;
+  res.setHeader("content-type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("content-disposition", 'attachment; filename="price_dashboard.xlsx"');
+  res.send(buf);
+});
+
 const clearAllSchema = z.object({
   confirm: z.literal("DELETE")
 });

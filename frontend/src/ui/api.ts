@@ -88,6 +88,17 @@ export type RefreshAllResponse = {
   results: NaverPriceResult[];
 };
 
+export type ExportRow = {
+  name: string;
+  ourPrice: number | null;
+  naverPrice: number | null;
+  shippingFee: number | null;
+  effectivePrice: number | null;
+  recommended: number | null;
+  diff: number | null;
+  status: string;
+};
+
 export type UploadProductsResponse = {
   ok: true;
   totalRows: number;
@@ -161,6 +172,24 @@ export const backend = {
     }
     if (!res.ok) throw new Error(await res.text());
     return (await res.json()) as UploadProductsResponse;
+  },
+  exportDashboardXlsx: async (rows: ExportRow[]) => {
+    let res: Response;
+    try {
+      res = await fetch(withBase("/api/products/export"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ rows })
+      });
+    } catch {
+      throw new Error(
+        apiBase() === ""
+          ? "엑셀 다운로드 실패: 백엔드가 꺼져 있을 수 있습니다. backend에서 `npm run dev`를 실행하세요."
+          : "엑셀 다운로드 실패: API 서버 연결을 확인하세요."
+      );
+    }
+    if (!res.ok) throw new Error(await res.text());
+    return await res.blob();
   },
   downloadUploadTemplateXlsx: async () => {
     let res: Response;
