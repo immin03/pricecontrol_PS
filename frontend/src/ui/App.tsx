@@ -43,7 +43,7 @@ import DownloadIcon from "@mui/icons-material/Download";
 import type { ExportRow, NaverCandidate, NaverPriceResult, Product } from "./api";
 import { backend } from "./api";
 
-type SortKey = "naverPrice" | "shippingFee" | "effectivePrice" | "recommended" | "diff";
+type CandidateSortKey = "price" | "shippingFee" | "effectivePrice" | "recommended" | "diff";
 type SortOrder = "asc" | "desc";
 
 type TabKey = "dashboard" | "products";
@@ -79,15 +79,16 @@ export default function App() {
   const [clearAllText, setClearAllText] = useState("");
   const [clearAllBusy, setClearAllBusy] = useState(false);
 
-  const [orderBy, setOrderBy] = useState<SortKey | null>(null);
-  const [order, setOrder] = useState<SortOrder>("asc");
+  // 후보 모달 내 가격 컬럼 정렬 상태 (null이면 기본 정렬: 포함 먼저 → 배송비 포함가 낮은 순)
+  const [candOrderBy, setCandOrderBy] = useState<CandidateSortKey | null>(null);
+  const [candOrder, setCandOrder] = useState<SortOrder>("asc");
 
-  function handleSort(key: SortKey) {
-    if (orderBy === key) {
-      setOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+  function handleCandSort(key: CandidateSortKey) {
+    if (candOrderBy === key) {
+      setCandOrder((prev) => (prev === "asc" ? "desc" : "asc"));
     } else {
-      setOrderBy(key);
-      setOrder("asc");
+      setCandOrderBy(key);
+      setCandOrder("asc");
     }
   }
 
@@ -282,37 +283,7 @@ export default function App() {
     return enriched;
   }, [products, resultByProductId]);
 
-  const filteredRows = useMemo(() => {
-    if (!orderBy) return rows;
-
-    const valueOf = (row: (typeof rows)[number]): number | null => {
-      switch (orderBy) {
-        case "naverPrice":
-          return row.result?.selected?.price ?? null;
-        case "shippingFee":
-          return row.result?.selected?.shippingFee ?? null;
-        case "effectivePrice":
-          return row.effective;
-        case "recommended":
-          return row.recommended;
-        case "diff":
-          return row.diff;
-        default:
-          return null;
-      }
-    };
-
-    const sorted = rows.slice().sort((a, b) => {
-      const av = valueOf(a);
-      const bv = valueOf(b);
-      // 값이 없는 행(-)은 항상 아래로 보냄
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1;
-      if (bv == null) return -1;
-      return order === "asc" ? av - bv : bv - av;
-    });
-    return sorted;
-  }, [rows, orderBy, order]);
+  const filteredRows = rows;
 
   async function openCandidates(product: Product, result?: NaverPriceResult) {
     // 방어: productId 없으면 호출하지 않음
@@ -330,6 +301,8 @@ export default function App() {
     setCandidatesError(null);
     setIncludeKw("");
     setExcludeKw("");
+    setCandOrderBy(null);
+    setCandOrder("asc");
     setSelectedRow({ product, result, candidates: [] });
     setSelectedProductId(product.id);
     try {
@@ -452,51 +425,11 @@ export default function App() {
                   <TableRow>
                     <TableCell>상품명</TableCell>
                     <TableCell align="right">우리 판매가</TableCell>
-                    <TableCell align="right" sortDirection={orderBy === "naverPrice" ? order : false}>
-                      <TableSortLabel
-                        active={orderBy === "naverPrice"}
-                        direction={orderBy === "naverPrice" ? order : "asc"}
-                        onClick={() => handleSort("naverPrice")}
-                      >
-                        네이버 최저가
-                      </TableSortLabel>
-                    </TableCell>
-                    <TableCell align="right" sortDirection={orderBy === "shippingFee" ? order : false}>
-                      <TableSortLabel
-                        active={orderBy === "shippingFee"}
-                        direction={orderBy === "shippingFee" ? order : "asc"}
-                        onClick={() => handleSort("shippingFee")}
-                      >
-                        배송비
-                      </TableSortLabel>
-                    </TableCell>
-                    <TableCell align="right" sortDirection={orderBy === "effectivePrice" ? order : false}>
-                      <TableSortLabel
-                        active={orderBy === "effectivePrice"}
-                        direction={orderBy === "effectivePrice" ? order : "asc"}
-                        onClick={() => handleSort("effectivePrice")}
-                      >
-                        배송비 포함가
-                      </TableSortLabel>
-                    </TableCell>
-                    <TableCell align="right" sortDirection={orderBy === "recommended" ? order : false}>
-                      <TableSortLabel
-                        active={orderBy === "recommended"}
-                        direction={orderBy === "recommended" ? order : "asc"}
-                        onClick={() => handleSort("recommended")}
-                      >
-                        추천 가격
-                      </TableSortLabel>
-                    </TableCell>
-                    <TableCell align="right" sortDirection={orderBy === "diff" ? order : false}>
-                      <TableSortLabel
-                        active={orderBy === "diff"}
-                        direction={orderBy === "diff" ? order : "asc"}
-                        onClick={() => handleSort("diff")}
-                      >
-                        가격 차이
-                      </TableSortLabel>
-                    </TableCell>
+                    <TableCell align="right">네이버 최저가</TableCell>
+                    <TableCell align="right">배송비</TableCell>
+                    <TableCell align="right">배송비 포함가</TableCell>
+                    <TableCell align="right">추천 가격</TableCell>
+                    <TableCell align="right">가격 차이</TableCell>
                     <TableCell align="center">상태</TableCell>
                   </TableRow>
                 </TableHead>
@@ -798,16 +731,52 @@ export default function App() {
                         <TableRow>
                           <TableCell sx={{ minWidth: 90 }}>포함 여부</TableCell>
                           <TableCell sx={{ minWidth: 160 }}>판매처</TableCell>
-                          <TableCell sx={{ width: "60%" }}>상품명</TableCell>
-                          <TableCell sx={{ minWidth: 160 }}>누락 단어</TableCell>
-                          <TableCell align="right" sx={{ minWidth: 110 }}>
-                            상품가
+                          <TableCell sx={{ width: "50%" }}>상품명</TableCell>
+                          <TableCell sx={{ minWidth: 140 }}>누락 단어</TableCell>
+                          <TableCell align="right" sx={{ minWidth: 110 }} sortDirection={candOrderBy === "price" ? candOrder : false}>
+                            <TableSortLabel
+                              active={candOrderBy === "price"}
+                              direction={candOrderBy === "price" ? candOrder : "asc"}
+                              onClick={() => handleCandSort("price")}
+                            >
+                              상품가
+                            </TableSortLabel>
                           </TableCell>
-                          <TableCell align="right" sx={{ minWidth: 90 }}>
-                            배송비
+                          <TableCell align="right" sx={{ minWidth: 90 }} sortDirection={candOrderBy === "shippingFee" ? candOrder : false}>
+                            <TableSortLabel
+                              active={candOrderBy === "shippingFee"}
+                              direction={candOrderBy === "shippingFee" ? candOrder : "asc"}
+                              onClick={() => handleCandSort("shippingFee")}
+                            >
+                              배송비
+                            </TableSortLabel>
                           </TableCell>
-                          <TableCell align="right" sx={{ minWidth: 120 }}>
-                            배송비 포함가
+                          <TableCell align="right" sx={{ minWidth: 120 }} sortDirection={candOrderBy === "effectivePrice" ? candOrder : false}>
+                            <TableSortLabel
+                              active={candOrderBy === "effectivePrice"}
+                              direction={candOrderBy === "effectivePrice" ? candOrder : "asc"}
+                              onClick={() => handleCandSort("effectivePrice")}
+                            >
+                              배송비 포함가
+                            </TableSortLabel>
+                          </TableCell>
+                          <TableCell align="right" sx={{ minWidth: 110 }} sortDirection={candOrderBy === "recommended" ? candOrder : false}>
+                            <TableSortLabel
+                              active={candOrderBy === "recommended"}
+                              direction={candOrderBy === "recommended" ? candOrder : "asc"}
+                              onClick={() => handleCandSort("recommended")}
+                            >
+                              추천 가격
+                            </TableSortLabel>
+                          </TableCell>
+                          <TableCell align="right" sx={{ minWidth: 110 }} sortDirection={candOrderBy === "diff" ? candOrder : false}>
+                            <TableSortLabel
+                              active={candOrderBy === "diff"}
+                              direction={candOrderBy === "diff" ? candOrder : "asc"}
+                              onClick={() => handleCandSort("diff")}
+                            >
+                              가격 차이
+                            </TableSortLabel>
                           </TableCell>
                           <TableCell align="center" sx={{ minWidth: 86 }}>
                             링크
@@ -816,13 +785,42 @@ export default function App() {
                       </TableHead>
                       <TableBody>
                         {(() => {
-                          const sorted = kwFiltered
-                            .slice()
-                            .sort((a, b) => {
-                              // 8. 모달 정렬: PASSED(포함) 먼저, 그 다음 배송비 포함가 낮은 순
+                          const ourPrice =
+                            selectedRow?.product.ourPrice ?? selectedRow?.result?.ourPrice ?? null;
+                          const recommendedOf = (c: NaverCandidate) =>
+                            Number.isFinite(c.effectivePrice) ? Math.max(0, c.effectivePrice - 1000) : null;
+                          const diffOf = (c: NaverCandidate) =>
+                            ourPrice != null && Number.isFinite(c.effectivePrice) ? ourPrice - c.effectivePrice : null;
+                          const valueOf = (c: NaverCandidate): number | null => {
+                            switch (candOrderBy) {
+                              case "price":
+                                return c.price;
+                              case "shippingFee":
+                                return c.shippingFee;
+                              case "effectivePrice":
+                                return c.effectivePrice;
+                              case "recommended":
+                                return recommendedOf(c);
+                              case "diff":
+                                return diffOf(c);
+                              default:
+                                return null;
+                            }
+                          };
+
+                          const sorted = kwFiltered.slice().sort((a, b) => {
+                            if (!candOrderBy) {
+                              // 기본 정렬: 포함(PASSED) 먼저 → 배송비 포함가 낮은 순
                               if (a.isPassed !== b.isPassed) return a.isPassed ? -1 : 1;
                               return a.effectivePrice - b.effectivePrice;
-                            });
+                            }
+                            const av = valueOf(a);
+                            const bv = valueOf(b);
+                            if (av == null && bv == null) return 0;
+                            if (av == null) return 1;
+                            if (bv == null) return -1;
+                            return candOrder === "asc" ? av - bv : bv - av;
+                          });
                           const minEffectivePassed = sorted.find((c) => c.isPassed)?.effectivePrice ?? null;
 
                           return sorted.map((c, idx) => {
@@ -887,6 +885,19 @@ export default function App() {
                                 <TableCell align="right">
                                   <Typography variant="body2" sx={{ fontWeight: 500 }}>
                                     {money(c.effectivePrice)}
+                                  </Typography>
+                                </TableCell>
+                                <TableCell align="right">
+                                  <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                                    {money(recommendedOf(c))}
+                                  </Typography>
+                                </TableCell>
+                                <TableCell align="right">
+                                  <Typography
+                                    variant="body2"
+                                    sx={{ fontWeight: 700, color: diffColor(diffOf(c), c.effectivePrice) }}
+                                  >
+                                    {money(diffOf(c))}
                                   </Typography>
                                 </TableCell>
                                 <TableCell align="center">
