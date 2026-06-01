@@ -40,7 +40,7 @@ import DeleteIcon from "@mui/icons-material/Delete";
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
 import DownloadIcon from "@mui/icons-material/Download";
-import type { ExportRow, NaverCandidate, NaverPriceResult, Product } from "./api";
+import type { CandidateExportRow, ExportRow, NaverCandidate, NaverPriceResult, Product } from "./api";
 import { backend } from "./api";
 
 type CandidateSortKey = "price" | "shippingFee" | "effectivePrice" | "recommended" | "diff";
@@ -284,6 +284,89 @@ export default function App() {
   }, [products, resultByProductId]);
 
   const filteredRows = rows;
+
+  // 후보 모달에 실제로 표시되는 후보(키워드 필터 + 정렬 + 추천가/가격차이 계산)
+  const visibleCandidates = useMemo(() => {
+    const includeList = parseKeywords(includeKw);
+    const excludeList = parseKeywords(excludeKw);
+
+    const ourPrice = selectedRow?.product.ourPrice ?? selectedRow?.result?.ourPrice ?? null;
+    const recommendedOf = (c: NaverCandidate) =>
+      Number.isFinite(c.effectivePrice) ? Math.max(0, c.effectivePrice - 1000) : null;
+    const diffOf = (c: NaverCandidate) =>
+      ourPrice != null && Number.isFinite(c.effectivePrice) ? ourPrice - c.effectivePrice : null;
+    const valueOf = (c: NaverCandidate): number | null => {
+      switch (candOrderBy) {
+        case "price":
+          return c.price;
+        case "shippingFee":
+          return c.shippingFee;
+        case "effectivePrice":
+          return c.effectivePrice;
+        case "recommended":
+          return recommendedOf(c);
+        case "diff":
+          return diffOf(c);
+        default:
+          return null;
+      }
+    };
+
+    const kwFiltered = (selectedRow?.candidates ?? []).filter((c) => {
+      const t = (c.title ?? "").toLowerCase();
+      if (includeList.length > 0 && !includeList.every((kw) => t.includes(kw))) return false;
+      if (excludeList.length > 0 && excludeList.some((kw) => t.includes(kw))) return false;
+      return true;
+    });
+
+    const sorted = kwFiltered.slice().sort((a, b) => {
+      if (!candOrderBy) {
+        if (a.isPassed !== b.isPassed) return a.isPassed ? -1 : 1;
+        return a.effectivePrice - b.effectivePrice;
+      }
+      const av = valueOf(a);
+      const bv = valueOf(b);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      return candOrder === "asc" ? av - bv : bv - av;
+    });
+
+    return {
+      includeList,
+      excludeList,
+      items: sorted.map((c) => ({ c, recommended: recommendedOf(c), diff: diffOf(c) }))
+    };
+  }, [selectedRow, includeKw, excludeKw, candOrderBy, candOrder]);
+
+  async function downloadCandidatesExcel() {
+    try {
+      const productName = selectedRow?.product.name ?? "후보 리스트";
+      const exportRows: CandidateExportRow[] = visibleCandidates.items.map(({ c, recommended, diff }) => ({
+        included: c.isPassed ? "포함" : "제외",
+        mallName: c.mallName ?? "",
+        title: c.title ?? "",
+        missingTokens: c.missingTokens && c.missingTokens.length > 0 ? c.missingTokens.join(", ") : "",
+        price: Number.isFinite(c.price) ? c.price : null,
+        shippingFee: Number.isFinite(c.shippingFee) ? c.shippingFee : null,
+        effectivePrice: Number.isFinite(c.effectivePrice) ? c.effectivePrice : null,
+        recommended,
+        diff,
+        link: c.link ?? ""
+      }));
+      const blob = await backend.exportCandidatesXlsx(productName, exportRows);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `candidates_${productName}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      notify(e instanceof Error ? e.message : "엑셀 다운로드 실패", "error");
+    }
+  }
 
   async function openCandidates(product: Product, result?: NaverPriceResult) {
     // 방어: productId 없으면 호출하지 않음
@@ -637,6 +720,14 @@ export default function App() {
               </Box>
               <Stack direction="row" spacing={1}>
                 <Button
+                  variant="outlined"
+                  startIcon={<DownloadIcon />}
+                  disabled={visibleCandidates.items.length === 0}
+                  onClick={() => void downloadCandidatesExcel()}
+                >
+                  엑셀 다운로드
+                </Button>
+                <Button
                   onClick={() => {
                     setCandidatesOpen(false);
                     setSelectedProductId(null);
@@ -697,16 +788,9 @@ export default function App() {
                 </Stack>
 
                 {(() => {
-                  const includeList = parseKeywords(includeKw);
-                  const excludeList = parseKeywords(excludeKw);
-                  const kwFiltered = (selectedRow?.candidates ?? []).filter((c) => {
-                    const t = (c.title ?? "").toLowerCase();
-                    if (includeList.length > 0 && !includeList.every((kw) => t.includes(kw))) return false;
-                    if (excludeList.length > 0 && excludeList.some((kw) => t.includes(kw))) return false;
-                    return true;
-                  });
+                  const { includeList, excludeList, items } = visibleCandidates;
 
-                  if (kwFiltered.length === 0) {
+                  if (items.length === 0) {
                     return (
                       <Paper variant="outlined" sx={{ p: 2 }}>
                         <Typography color="text.secondary">
@@ -785,45 +869,11 @@ export default function App() {
                       </TableHead>
                       <TableBody>
                         {(() => {
-                          const ourPrice =
-                            selectedRow?.product.ourPrice ?? selectedRow?.result?.ourPrice ?? null;
-                          const recommendedOf = (c: NaverCandidate) =>
-                            Number.isFinite(c.effectivePrice) ? Math.max(0, c.effectivePrice - 1000) : null;
-                          const diffOf = (c: NaverCandidate) =>
-                            ourPrice != null && Number.isFinite(c.effectivePrice) ? ourPrice - c.effectivePrice : null;
-                          const valueOf = (c: NaverCandidate): number | null => {
-                            switch (candOrderBy) {
-                              case "price":
-                                return c.price;
-                              case "shippingFee":
-                                return c.shippingFee;
-                              case "effectivePrice":
-                                return c.effectivePrice;
-                              case "recommended":
-                                return recommendedOf(c);
-                              case "diff":
-                                return diffOf(c);
-                              default:
-                                return null;
-                            }
-                          };
+                          const items = visibleCandidates.items;
+                          const minEffectivePassed =
+                            items.find(({ c }) => c.isPassed)?.c.effectivePrice ?? null;
 
-                          const sorted = kwFiltered.slice().sort((a, b) => {
-                            if (!candOrderBy) {
-                              // 기본 정렬: 포함(PASSED) 먼저 → 배송비 포함가 낮은 순
-                              if (a.isPassed !== b.isPassed) return a.isPassed ? -1 : 1;
-                              return a.effectivePrice - b.effectivePrice;
-                            }
-                            const av = valueOf(a);
-                            const bv = valueOf(b);
-                            if (av == null && bv == null) return 0;
-                            if (av == null) return 1;
-                            if (bv == null) return -1;
-                            return candOrder === "asc" ? av - bv : bv - av;
-                          });
-                          const minEffectivePassed = sorted.find((c) => c.isPassed)?.effectivePrice ?? null;
-
-                          return sorted.map((c, idx) => {
+                          return items.map(({ c, recommended, diff }, idx) => {
                             const highlight =
                               minEffectivePassed != null && c.isPassed && c.effectivePrice === minEffectivePassed;
 
@@ -889,15 +939,15 @@ export default function App() {
                                 </TableCell>
                                 <TableCell align="right">
                                   <Typography variant="body2" sx={{ fontWeight: 500 }}>
-                                    {money(recommendedOf(c))}
+                                    {money(recommended)}
                                   </Typography>
                                 </TableCell>
                                 <TableCell align="right">
                                   <Typography
                                     variant="body2"
-                                    sx={{ fontWeight: 700, color: diffColor(diffOf(c), c.effectivePrice) }}
+                                    sx={{ fontWeight: 700, color: diffColor(diff, c.effectivePrice) }}
                                   >
-                                    {money(diffOf(c))}
+                                    {money(diff)}
                                   </Typography>
                                 </TableCell>
                                 <TableCell align="center">

@@ -101,6 +101,72 @@ productsRouter.post("/export", async (req, res) => {
   res.send(buf);
 });
 
+const candidateRowSchema = z.object({
+  included: z.string().default(""),
+  mallName: z.string().default(""),
+  title: z.string().default(""),
+  missingTokens: z.string().default(""),
+  price: z.number().nullable().optional(),
+  shippingFee: z.number().nullable().optional(),
+  effectivePrice: z.number().nullable().optional(),
+  recommended: z.number().nullable().optional(),
+  diff: z.number().nullable().optional(),
+  link: z.string().default("")
+});
+
+const exportCandidatesSchema = z.object({
+  productName: z.string().default("후보 리스트"),
+  rows: z.array(candidateRowSchema).default([])
+});
+
+// 후보 모달 데이터를 엑셀로 내보내기
+productsRouter.post("/export-candidates", async (req, res) => {
+  const parsed = exportCandidatesSchema.safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json(parsed.error.flatten());
+
+  const header = ["포함 여부", "판매처", "상품명", "누락 단어", "상품가", "배송비", "배송비 포함가", "추천 가격", "가격 차이", "링크"];
+  const aoa: Array<Array<string | number>> = [header];
+
+  const cell = (v: number | null | undefined): string | number => (v == null || !Number.isFinite(v) ? "-" : v);
+
+  for (const r of parsed.data.rows) {
+    aoa.push([
+      r.included || "-",
+      r.mallName || "-",
+      r.title || "-",
+      r.missingTokens || "-",
+      cell(r.price),
+      cell(r.shippingFee),
+      cell(r.effectivePrice),
+      cell(r.recommended),
+      cell(r.diff),
+      r.link || "-"
+    ]);
+  }
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws["!cols"] = [
+    { wch: 9 },
+    { wch: 16 },
+    { wch: 40 },
+    { wch: 14 },
+    { wch: 10 },
+    { wch: 8 },
+    { wch: 12 },
+    { wch: 10 },
+    { wch: 10 },
+    { wch: 40 }
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "후보리스트");
+
+  const buf = XLSX.write(wb, { bookType: "xlsx", type: "buffer" }) as unknown as Buffer;
+  res.setHeader("content-type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("content-disposition", 'attachment; filename="naver_candidates.xlsx"');
+  res.send(buf);
+});
+
 const clearAllSchema = z.object({
   confirm: z.literal("DELETE")
 });
